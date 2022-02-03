@@ -1,58 +1,62 @@
-#Laravel PHP-fpm alpine 8.0
-FROM php:8.1-fpm-alpine
+FROM php:8.1-fpm
 
-RUN apk --update add \
-        wget \
-        curl \
-        build-base \
-        composer \
-        nodejs-current \
-        nodejs-current-npm \
-        libmcrypt-dev \
-        libxml2-dev \
-        pcre-dev \
-        zlib-dev \
-        autoconf \
-        oniguruma-dev \
-        openssl \
-        openssl-dev \
-        freetype-dev \
-        libjpeg-turbo-dev \
-        jpeg-dev \
-        libpng-dev \
-        imagemagick-dev \
-        imagemagick \
-        postgresql-dev \
-        libzip-dev \
-        gettext-dev \
-        libxslt-dev \
-        libgcrypt-dev
+# Set working directory
+WORKDIR /var/www
 
-RUN pecl channel-update pecl.php.net \
-    && pecl install mcrypt redis-5.3.4 \
-    && pecl channel-update https://pecl.php.net/channel.xml
+# Add docker php ext repo
+ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
 
-RUN docker-php-ext-install \
-        mysqli \
-        mbstring \
-        pdo \
-        pdo_mysql \
-        tokenizer \
-        xml \
-        pcntl \
-        bcmath \
-        pdo_pgsql \
-        zip \
-        intl \
-        gettext \
-        soap \
-        sockets \
-        xsl \
-    && docker-php-ext-configure gd --with-freetype=/usr/lib/ --with-jpeg=/usr/lib/ \
-    && docker-php-ext-install gd \
-    && docker-php-ext-enable redis
+# Install php extensions
+RUN chmod +x /usr/local/bin/install-php-extensions && sync && \
+    install-php-extensions mbstring pdo_mysql zip exif pcntl gd memcached
 
-RUN rm -rf /tmp/pear \
-    && rm /var/cache/apk/*
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+    locales \
+    zip \
+    jpegoptim optipng pngquant gifsicle \
+    unzip \
+    git \
+    curl \
+    lua-zlib-dev \
+    libmemcached-dev \
+    nginx
 
-WORKDIR /var/www/html
+# Install supervisor
+RUN apt-get install -y supervisor
+
+# Install composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Clear cache
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Add user for laravel application
+RUN groupadd -g 1000 www
+RUN useradd -u 1000 -ms /bin/bash -g www www
+
+# Copy code to /var/www
+COPY --chown=www:www-data . /var/www
+
+# add root to www group
+RUN chmod -R ug+w /var/www/storage
+
+# Copy nginx/php/supervisor configs
+RUN cp docker/supervisor.conf /etc/supervisord.conf
+RUN cp docker/php.ini /usr/local/etc/php/conf.d/app.ini
+RUN cp docker/nginx.conf /etc/nginx/sites-enabled/default
+
+# PHP Error Log Files
+RUN mkdir /var/log/php
+RUN touch /var/log/php/errors.log && chmod 777 /var/log/php/errors.log
+
+# Deployment steps
+RUN composer install --optimize-autoloader --no-dev
+RUN chmod +x /var/www/docker/run.sh
+
+EXPOSE 80
+ENTRYPOINT ["/var/www/docker/run.sh"]
